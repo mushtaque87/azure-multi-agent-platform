@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+*.pem
+infra/scripts/.deploy_state.json
+infra/scripts/.tmp_*
+.terraform/
+*.tfstate
+*.tfstate.*
+node_modules/
+frontend/dist/
