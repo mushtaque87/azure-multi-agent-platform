@@ -1,13 +1,35 @@
-"""The agent as a LangGraph state graph: guard_input -> agent (LLM) <-> tools -> END."""
+"""The agent as a LangGraph state graph: guard_input -> agent (LLM) <-> tools -> END.
+
+Why "graph": the agent's control flow is drawn as nodes (steps) joined by edges (what runs next).
+LangGraph runs that graph, saving the state after every node so a conversation can resume later.
+
+    START -> guard_input --blocked--> END
+                 | ok
+                 v
+               agent --final answer--> END
+               ^   | tool calls
+               |   v
+               +-- tools
+"""
+# Message types. A conversation is a list of these:
+#   SystemMessage = our instructions, HumanMessage = user, AIMessage = LLM reply, ToolMessage = tool result
 from langchain_core.messages import AIMessage, SystemMessage
+# MemorySaver = an in-RAM checkpointer: stores each thread's state in this process's memory
 from langgraph.checkpoint.memory import MemorySaver
+# StateGraph = the graph builder. MessagesState = a ready-made state with one field, "messages",
+# where updates returned by nodes are APPENDED to the list (not overwritten).
+# START / END = the special entry and exit points of every graph.
 from langgraph.graph import END, START, MessagesState, StateGraph
+# ToolNode = prebuilt node that executes the tool calls requested by the last AIMessage.
+# tools_condition = prebuilt router: "tools" if the LLM asked for tools, otherwise END.
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from .guards import GuardError, check_input
-from .llm import get_llm
-from .tools import TOOLS
+from .guards import GuardError, check_input  # generic input rules (no LangGraph inside)
+from .llm import get_llm                     # Foundry gpt-4.1-mini client
+from .tools import TOOLS                     # the 5 tools the LLM is allowed to call
 
+# Sent as the first message on EVERY LLM call. This is a soft guardrail: the LLM usually obeys
+# it but is not guaranteed to, so every rule that really matters is ALSO enforced in code.
 SYSTEM_PROMPT = """You are the House Price Assistant for a dataset of 10,000 house sales.
 You can: predict prices for new houses, look up a house by ID, answer statistics questions with SQL,
 compare a house to the market, and explain what drives prices.
@@ -22,33 +44,51 @@ Rules:
 
 
 def guard_input(state: MessagesState):
+    """Node 1: screen the newest user message BEFORE any LLM call (blocked requests cost 0 tokens)."""
     try:
+        # state["messages"][-1] = the last message = the one the user just sent
         check_input(state["messages"][-1].content)
     except GuardError as e:
+        # Append a refusal as the assistant's reply; route_after_guard will then stop the graph
         return {"messages": [AIMessage(content=f"I can't help with that request. {e}")]}
-    return {}
+    return {}  # empty update = state unchanged, carry on
 
 
 def route_after_guard(state: MessagesState):
-    # If the guard added a refusal, the last message is from the assistant -> stop
+    """Conditional edge after guard_input: decides which node runs next."""
+    # If the guard appended a refusal, the last message is an AIMessage -> finish. Otherwise -> LLM.
     return END if isinstance(state["messages"][-1], AIMessage) else "agent"
 
 
 def build_graph(checkpointer=None):
+    """Assemble and compile the agent once at startup; the result is run per request with .invoke().
+    checkpointer: where conversation state is saved. Default MemorySaver (RAM, lost on restart);
+    in Azure pass a persistent one (e.g. Postgres/Cosmos) so all replicas share conversations."""
+    # Create the LLM client and attach the tool schemas, so every call tells the model
+    # "these functions exist, with these arguments - you may ask to call them"
     llm = get_llm().bind_tools(TOOLS)
 
     def agent(state: MessagesState):
+        """Node 2: one LLM call over the system prompt + the whole conversation so far.
+        The reply is either a final answer, or an AIMessage containing tool_calls."""
         return {"messages": [llm.invoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])]}
 
-    g = StateGraph(MessagesState)
+    g = StateGraph(MessagesState)  # a graph whose shared state is the message list
+
+    # --- Nodes: the steps ---
     g.add_node("guard_input", guard_input)
     g.add_node("agent", agent)
+    # Node 3: runs the requested tools and appends a ToolMessage per result.
     # handle_tool_errors: a failing tool (DB down, firewall) returns an error message to the LLM,
     # which can apologise or retry, instead of crashing the whole request with HTTP 500
     g.add_node("tools", ToolNode(TOOLS, handle_tool_errors=lambda e: f"Tool failed: {type(e).__name__}. "
                                  "Tell the user the data service is temporarily unavailable."))
-    g.add_edge(START, "guard_input")
-    g.add_conditional_edges("guard_input", route_after_guard, ["agent", END])
+
+    # --- Edges: what runs next ---
+    g.add_edge(START, "guard_input")                                              # always screen first
+    g.add_conditional_edges("guard_input", route_after_guard, ["agent", END])     # blocked -> END
     g.add_conditional_edges("agent", tools_condition)  # tool calls -> "tools", otherwise END
-    g.add_edge("tools", "agent")
+    g.add_edge("tools", "agent")                       # after tools, the LLM reads results and decides again
+
+    # compile = validate the wiring (no dangling nodes) and return a runnable graph
     return g.compile(checkpointer=checkpointer or MemorySaver())

@@ -38,7 +38,7 @@ The model and its serving infrastructure come from the companion repo **[ai-mlop
 ./infra/scripts/run_tools.sh sql_setup.py -s sql-house-agents --load   # create table, load, verify
 ```
 
-Concept notes for each phase are in [docs/concepts/](docs/concepts/).
+Concept notes for each phase are in [docs/concepts/](docs/concepts/). Guardrail principles: [docs/concepts/guardrails.md](docs/concepts/guardrails.md).
 
 ## Phase 2 results: single LangGraph agent
 

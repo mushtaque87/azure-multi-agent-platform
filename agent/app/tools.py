@@ -2,22 +2,26 @@
 because the LLM chooses tools by reading their names, descriptions and argument schemas."""
 import json
 import os
-from functools import lru_cache
-from typing import Literal
+from functools import lru_cache  # cache a function's result: load the model from disk only once
+from typing import Literal         # "one of these exact strings" - becomes an enum in the tool schema
 
-import httpx
-from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+import httpx                                  # HTTP client for the Azure ML endpoint
+from langchain_core.tools import tool          # @tool turns a function into something the LLM can call
+from pydantic import BaseModel, Field          # argument schemas with validation rules
 
 from . import config, db
 from .guards import GuardError, validate_sql
 
+# Column order the Azure ML endpoint (score.py) expects
 FEATURES = ["SQFT", "BEDROOMS", "BATHROOMS", "AGE_YEARS", "GARAGE_SPACES",
             "NEIGHBORHOOD", "CONDITION", "HAS_POOL", "LOT_SIZE_SQFT"]
 Neighborhood = Literal["Downtown", "Suburban", "Rural", "Waterfront", "Urban"]
 Condition = Literal["Excellent", "Good", "Fair", "Poor"]
 
 
+# Tool argument rules. The LLM sees these ranges in the tool schema, AND Pydantic enforces them before
+# any model/DB call: sqft=50 or neighborhood="Mars" is rejected and the error goes back to the LLM.
+# Ranges match the training data - predicting outside it would be unreliable extrapolation.
 class HouseFeatures(BaseModel):
     sqft: int = Field(ge=500, le=5000, description="Living area in square feet (500-5000)")
     bedrooms: int = Field(ge=1, le=6, description="Number of bedrooms (1-6)")
@@ -29,36 +33,41 @@ class HouseFeatures(BaseModel):
     has_pool: bool
     lot_size_sqft: int = Field(ge=1000, le=20000, description="Lot size in square feet (1000-20000)")
 
-    def as_row(self):
+    def as_row(self):  # values in FEATURES order
         return [self.sqft, self.bedrooms, self.bathrooms, self.age_years, self.garage_spaces,
                 self.neighborhood, self.condition, self.has_pool, self.lot_size_sqft]
 
 
 @lru_cache(maxsize=1)
 def _local_model():
-    import joblib
+    """Load the trained model + encoder (copied from ai-mlops/azure_ml/model) once, then reuse."""
+    import joblib  # imported lazily: only needed when the local model is used
     return (joblib.load(os.path.join(config.LOCAL_MODEL_DIR, "house_price_model.joblib")),
             joblib.load(os.path.join(config.LOCAL_MODEL_DIR, "ordinal_encoder.joblib")))
 
 
 def _predict(features: HouseFeatures) -> tuple[float, str]:
     """Azure ML endpoint if configured, else the same model loaded locally. Returns (price, source)."""
-    if config.ML_ENDPOINT_URL:
+    if config.ML_ENDPOINT_URL:  # production path: call the managed endpoint over HTTPS
         body = {"input_data": {"columns": FEATURES, "data": [features.as_row()]}}
         r = httpx.post(config.ML_ENDPOINT_URL, json=body, timeout=30,
                        headers={"Authorization": f"Bearer {config.ML_ENDPOINT_KEY}"})
-        r.raise_for_status()
+        r.raise_for_status()  # HTTP 4xx/5xx -> exception -> handled by the caller
         return float(r.json()["predictions"][0]), "azure-ml-endpoint"
+    # Local path: same preprocessing as score.py, so results are identical to the endpoint
     import pandas as pd
     model, encoder = _local_model()
     row = dict(zip(FEATURES, features.as_row()))
+    # Text categories -> the numbers the model was trained on (e.g. "Downtown" -> 0.0)
     row["NEIGHBORHOOD"], row["CONDITION"] = encoder.transform([[row["NEIGHBORHOOD"], row["CONDITION"]]])[0]
     row["HAS_POOL"] = int(row["HAS_POOL"])
+    # Column order used at training time (different from the endpoint's input order)
     order = ["SQFT", "BEDROOMS", "BATHROOMS", "AGE_YEARS", "GARAGE_SPACES",
              "LOT_SIZE_SQFT", "NEIGHBORHOOD", "CONDITION", "HAS_POOL"]
     return float(model.predict(pd.DataFrame([row])[order].astype(float))[0]), "local-model"
 
 
+# The docstring below is the tool DESCRIPTION the LLM reads to decide when to use it.
 @tool(args_schema=HouseFeatures)
 def predict_price(**kwargs) -> str:
     """Predict the sale price of a house that is NOT in the dataset, from its 9 features.
@@ -91,7 +100,8 @@ class LookupInput(BaseModel):
 def lookup_house(house_id: int) -> str:
     """Return the full record (features and actual sale price) of ONE existing house by its ID.
     Use only when the user gives a specific house ID."""
-    rows = db.query("SELECT * FROM dbo.house_prices WHERE id = ?", (house_id,))  # parameterised: no injection
+    # Parameterised: the id is sent separately from the SQL text, so it can never change the query
+    rows = db.query("SELECT * FROM dbo.house_prices WHERE id = ?", (house_id,))
     return json.dumps(rows[0], default=str) if rows else json.dumps({"error": f"No house with ID {house_id}"})
 
 
@@ -109,14 +119,15 @@ def query_house_stats(sql: str) -> str:
     month_sold, year_sold, price (USD).
     Use CAST(price AS FLOAT) inside AVG to avoid integer averages. Never write INSERT/UPDATE/DELETE/DROP."""
     try:
-        safe_sql = validate_sql(sql)
+        safe_sql = validate_sql(sql)  # guard at the boundary: right before the database
     except GuardError as e:
+        # Tell the LLM why, so it can rewrite the query or explain to the user
         return json.dumps({"error": f"Query rejected by guardrail: {e}"})
-    rows = db.query(safe_sql)
+    rows = db.query(safe_sql)  # only the validated/rewritten SQL ever runs
     return json.dumps({"sql_executed": safe_sql, "rows": rows}, default=str)
 
 
-class CompareInput(HouseFeatures):
+class CompareInput(HouseFeatures):  # same 9 features + an optional asking price
     listed_price: float | None = Field(default=None, description="Asking price in USD, if the user gave one")
 
 
@@ -130,6 +141,7 @@ def compare_to_market(listed_price: float | None = None, **kwargs) -> str:
         predicted, source = _predict(features)
     except httpx.HTTPError as e:
         return json.dumps({"error": f"Valuation service unavailable: {type(e).__name__}"})
+    # Similar actual sales: same neighborhood and bedrooms, size within +/-15% (parameterised SQL)
     similar = db.query(
         "SELECT COUNT(*) AS n, AVG(CAST(price AS FLOAT)) AS avg_price, MIN(price) AS min_price, "
         "MAX(price) AS max_price FROM dbo.house_prices WHERE neighborhood = ? AND bedrooms = ? "
@@ -142,4 +154,5 @@ def compare_to_market(listed_price: float | None = None, **kwargs) -> str:
     return json.dumps(result, default=str)
 
 
+# Everything the LLM may call. Not in this list = impossible for the agent to do.
 TOOLS = [predict_price, explain_prediction, lookup_house, query_house_stats, compare_to_market]
