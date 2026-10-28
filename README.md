@@ -18,7 +18,7 @@ The model and its serving infrastructure come from the companion repo **[ai-mlop
 |---|---|
 | 1. Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2. Single LangGraph agent with direct tools | Done |
-| 3. Chat UI, Container Apps, tracing | Planned |
+| 3. Chat UI, Container Apps, tracing | Local done; Azure deploy in progress |
 | 4. Evaluation and security baseline | Planned |
 | 5. Tools refactored into MCP servers | Planned |
 | 6. Multi-agent over A2A plus RAG advisor | Planned |
@@ -87,3 +87,28 @@ docker exec -w /srv house-agent python -m tests.test_guards  # guard unit tests
 ```
 
 Try it with [api/requests.http](api/requests.http).
+
+## Phase 3 results: chat UI and observability
+
+```bash
+./agent/run_agent.sh   # agent + chat UI: http://localhost:8000   Phoenix traces: http://localhost:6006
+```
+
+**Chat UI.** A single page served by the agent. Each answer shows the tools used, latency, token counts, and an expandable view of each tool's arguments and result.
+
+![Chat UI](docs/images/chat_ui.png)
+
+**Tracing with Arize Phoenix (OpenTelemetry + OpenInference).** Every request is one trace: the LangGraph run, each node (`guard_input`, `agent`, `tools`), each LLM call (prompt, response, tokens, cost) and each tool call (arguments, result, errors).
+
+![Phoenix trace of a lookup](docs/images/phoenix_trace.png)
+
+**Observability catching a real issue.** The trace below took 21.9 s and shows `query_house_stats` failing (red marker): the serverless Azure SQL database was resuming from auto-pause. The fix was retry with backoff on transient SQL errors in `agent/app/db.py`.
+
+The token breakdown also shows **88% of input tokens served from the prompt cache**: the system prompt and tool schemas are an identical prefix on every call, so Azure OpenAI caches them.
+
+![Phoenix trace showing cold-start failure and prompt cache](docs/images/phoenix_cold_start_cache.png)
+
+**Context and cost controls:**
+- trims history to the newest ~6,000 tokens per LLM call, without splitting a tool call from its result;
+- 30 questions per conversation;
+- `recursion_limit` 12 with a friendly reply when it's reached.
