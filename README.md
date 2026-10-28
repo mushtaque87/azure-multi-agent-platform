@@ -18,12 +18,16 @@ The model and its serving infrastructure come from the companion repo **[ai-mlop
 |---|---|
 | 1. Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2. Single LangGraph agent with direct tools | Done |
-| 3. Chat UI, Container Apps, tracing | Local done; Azure deploy in progress |
+| 3. Chat UI and tracing → Azure Container Apps, managed identity | Local done; Azure deploy in progress |
 | 4. Evaluation and security baseline | Planned |
-| 5. Tools refactored into MCP servers | Planned |
-| 6. Multi-agent over A2A plus RAG advisor | Planned |
-| 7. APIM AI gateway, full evaluation, load testing | Planned |
-| 8. Terraform, CI/CD, ADRs | Planned |
+| 5. Multi-agent over A2A | Planned |
+| 6. APIM AI gateway | Planned |
+| 7. Fine-tuning by distillation | Planned |
+| 8. RAG advisor, semantic cache, savings dashboard | Planned |
+| 9. Tools refactored into MCP servers | Planned |
+| 10. Terraform, CI/CD, ADRs | Planned |
+
+Details, design notes and the Azure resource list: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Phase 1 results
 
