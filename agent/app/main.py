@@ -1,14 +1,28 @@
 """HTTP API for the agent: POST /chat (JSON), GET /healthz."""
 import json   # parse tool results (tools return JSON strings)
+import os
 import time   # measure latency
 import uuid   # generate a conversation id when the client doesn't send one
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.errors import GraphRecursionError  # raised when recursion_limit is hit
 # Pydantic: declare the request shape; FastAPI validates every request against it (HTTP 422 if invalid)
 from pydantic import BaseModel, Field
 
+from . import config
 from .graph import build_graph
+
+# Tracing must be set up BEFORE the graph is built, so every LLM call, tool call and graph step
+# is recorded as an OpenTelemetry span and sent to Phoenix.
+if config.PHOENIX_COLLECTOR_ENDPOINT:
+    from phoenix.otel import register
+    register(project_name="house-price-agent",
+             endpoint=f"{config.PHOENIX_COLLECTOR_ENDPOINT}/v1/traces",
+             auto_instrument=True)  # turns on the OpenInference LangChain instrumentor
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 app = FastAPI(title="House Price Agent", version="1.0")  # the web app; uvicorn serves it on port 8000
 # Built ONCE at server start, shared by all requests: creating the LLM client and compiling the
@@ -28,6 +42,12 @@ def healthz():
     return {"status": "ok"}
 
 
+@app.get("/")
+def index():
+    """The single-page chat UI (same origin as /chat, so no CORS setup is needed)."""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
 @app.post("/chat")
 def chat(req: ChatRequest):
     # Continue the client's conversation, or start a new one with a random id (returned to the client)
@@ -42,7 +62,13 @@ def chat(req: ChatRequest):
 
     # Run the graph to END. Input = the new user message (appended to the saved history).
     # recursion_limit = max node steps for this run, so a tool-calling loop can't run (and bill) forever.
-    result = graph.invoke({"messages": [HumanMessage(req.message)]}, {**cfg, "recursion_limit": 12})
+    try:
+        result = graph.invoke({"messages": [HumanMessage(req.message)]}, {**cfg, "recursion_limit": 12})
+    except GraphRecursionError:
+        # Friendly reply instead of HTTP 500 when the agent needs too many steps
+        return {"thread_id": thread_id, "answer": "I couldn't complete that in a reasonable number of steps. "
+                "Please ask a narrower question.", "tool_calls": [],
+                "latency_ms": round((time.perf_counter() - start) * 1000), "tokens": {"input": 0, "output": 0}}
     new = result["messages"][before:]  # this turn only: user msg, AI tool calls, tool results, answer
 
     # Pair each tool call with its result using the tool_call_id the LLM assigned (works even if the

@@ -1,0 +1,20 @@
+# Local stack: the agent + Arize Phoenix (open-source tracing UI, stores traces in its own container).
+services:
+  agent:
+    build: .
+    image: house-agent
+    container_name: house-agent
+    ports: ["8000:8000"]
+    environment:
+      # Listed without values = taken from the shell that runs compose (run_agent.sh exports them)
+      - FOUNDRY_API_KEY
+      - SQL_ACCESS_TOKEN
+      - ML_ENDPOINT_URL
+      - ML_ENDPOINT_KEY
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006  # "phoenix" = the service name below (compose DNS)
+    depends_on: [phoenix]
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    ports: ["6006:6006"]  # UI and OTLP/HTTP trace collector on the same port

@@ -13,7 +13,9 @@ LangGraph runs that graph, saving the state after every node so a conversation c
 """
 # Message types. A conversation is a list of these:
 #   SystemMessage = our instructions, HumanMessage = user, AIMessage = LLM reply, ToolMessage = tool result
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, trim_messages
+# Fast token estimate (~4 characters per token) - good enough for a budget, no tokenizer download
+from langchain_core.messages.utils import count_tokens_approximately
 # MemorySaver = an in-RAM checkpointer: stores each thread's state in this process's memory
 from langgraph.checkpoint.memory import MemorySaver
 # StateGraph = the graph builder. MessagesState = a ready-made state with one field, "messages",
@@ -24,6 +26,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 # tools_condition = prebuilt router: "tools" if the LLM asked for tools, otherwise END.
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from . import config
 from .guards import GuardError, check_input  # generic input rules (no LangGraph inside)
 from .llm import get_llm                     # Foundry gpt-4.1-mini client
 from .tools import TOOLS                     # the 5 tools the LLM is allowed to call
@@ -48,6 +51,10 @@ def guard_input(state: MessagesState):
     try:
         # state["messages"][-1] = the last message = the one the user just sent
         check_input(state["messages"][-1].content)
+        # Hard cap on conversation length: bounds cost per thread and stops endless sessions
+        turns = sum(isinstance(m, HumanMessage) for m in state["messages"])
+        if turns > config.MAX_TURNS:
+            raise GuardError(f"This conversation reached {config.MAX_TURNS} questions. Please start a new chat.")
     except GuardError as e:
         # Append a refusal as the assistant's reply; route_after_guard will then stop the graph
         return {"messages": [AIMessage(content=f"I can't help with that request. {e}")]}
@@ -69,9 +76,19 @@ def build_graph(checkpointer=None):
     llm = get_llm().bind_tools(TOOLS)
 
     def agent(state: MessagesState):
-        """Node 2: one LLM call over the system prompt + the whole conversation so far.
+        """Node 2: one LLM call over the system prompt + the RECENT conversation.
         The reply is either a final answer, or an AIMessage containing tool_calls."""
-        return {"messages": [llm.invoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])]}
+        # Context management: the full history stays in the checkpointer, but only the newest
+        # messages that fit the token budget are sent, so cost per call stays flat in long chats.
+        recent = trim_messages(
+            state["messages"],
+            max_tokens=config.MAX_CONTEXT_TOKENS,
+            token_counter=count_tokens_approximately,
+            strategy="last",      # keep the newest messages, drop the oldest
+            start_on="human",     # the kept window must begin at a user message...
+            allow_partial=False,  # ...and never cut a message (or a tool call from its result) in half
+        )
+        return {"messages": [llm.invoke([SystemMessage(SYSTEM_PROMPT), *recent])]}
 
     g = StateGraph(MessagesState)  # a graph whose shared state is the message list
 

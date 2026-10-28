@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>House Price Agent</title>
+  <style>
+    :root { color-scheme: light dark; --line: light-dark(#d1d5db, #374151); --muted: light-dark(#6b7280, #9ca3af); }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, system-ui, sans-serif; color: light-dark(#1f2937, #e5e7eb);
+           background: light-dark(#f9fafb, #111827); }
+    .wrap { max-width: 880px; width: 100%; margin: 0 auto; padding: clamp(12px, 3vw, 24px);
+            display: flex; flex-direction: column; height: 100dvh; }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    h1 { font-size: 1.25rem; margin: 0; }
+    .sub { color: var(--muted); font-size: .85rem; }
+    #log { flex: 1; overflow-y: auto; padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
+    .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; line-height: 1.45; }
+    .user { align-self: flex-end; background: light-dark(#2563eb, #1d4ed8); color: #fff; }
+    .bot { align-self: flex-start; background: light-dark(#fff, #1f2937); border: 1px solid var(--line); }
+    .meta { font-size: .75rem; color: var(--muted); margin-top: 6px; }
+    details { margin-top: 6px; font-size: .8rem; }
+    details pre { overflow-x: auto; background: light-dark(#f3f4f6, #111827); padding: 8px; border-radius: 6px; margin: 4px 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .chip { border: 1px solid var(--line); background: transparent; color: inherit; border-radius: 999px;
+            padding: 4px 10px; font-size: .8rem; cursor: pointer; }
+    form { display: flex; gap: 8px; }
+    textarea { flex: 1; resize: none; padding: 10px; border-radius: 10px; border: 1px solid var(--line);
+               font: inherit; background: light-dark(#fff, #1f2937); color: inherit; }
+    button.send { padding: 0 18px; border-radius: 10px; border: 0; background: #2563eb; color: #fff; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>House Price Agent</h1>
+    <span class="sub">LangGraph · Azure AI Foundry gpt-4.1-mini · Azure SQL · <a href="#" id="newChat">new chat</a></span>
+  </header>
+  <div class="chips" id="chips"></div>
+  <div id="log" aria-live="polite"></div>
+  <form id="form">
+    <textarea id="input" rows="2" maxlength="2000" placeholder="Ask about house prices... (Enter to send)"></textarea>
+    <button class="send" id="send" type="submit">Send</button>
+  </form>
+</div>
+<script>
+  // All handlers are attached here (no inline onclick). Agent text is inserted with textContent,
+  // never innerHTML, so a malicious answer can't inject script (XSS protection).
+  const examples = [
+    "What is the average price of houses in the Downtown neighborhood?",
+    "Look up house ID 42",
+    "Is $650,000 a good price for a 2000 sqft, 3 bed, 2 bath, 10 year old Suburban house in Good condition, 2 garage, no pool, 6000 sqft lot?",
+    "What drives house prices the most?",
+  ];
+  const log = document.getElementById("log"), input = document.getElementById("input");
+  const send = document.getElementById("send");
+  let threadId = null;  // returned by the API; sent back so the agent remembers the conversation
+
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  function addBot(r) {
+    const box = el("div", "msg bot", r.answer);
+    const tools = (r.tool_calls || []).map(c => c.tool).join(", ") || "none";
+    box.appendChild(el("div", "meta", `tools: ${tools} · ${r.latency_ms} ms · tokens in/out ${r.tokens.input}/${r.tokens.output}`));
+    for (const c of r.tool_calls || []) {
+      const d = el("details"); d.appendChild(el("summary", null, `${c.tool} details`));
+      d.appendChild(el("pre", null, JSON.stringify({ args: c.args, result: c.result }, null, 2)));
+      box.appendChild(d);
+    }
+    log.appendChild(box); log.scrollTop = log.scrollHeight;
+  }
+
+  async function ask(text) {
+    if (!text.trim()) return;
+    log.appendChild(el("div", "msg user", text)); input.value = ""; send.disabled = true;
+    const waiting = el("div", "msg bot", "Thinking..."); log.appendChild(waiting); log.scrollTop = log.scrollHeight;
+    try {
+      const res = await fetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+                                         body: JSON.stringify({ message: text, thread_id: threadId }) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const r = await res.json(); threadId = r.thread_id; waiting.remove(); addBot(r);
+    } catch (e) { waiting.textContent = `Error: ${e.message}`; }
+    finally { send.disabled = false; input.focus(); }
+  }
+
+  document.getElementById("form").addEventListener("submit", e => { e.preventDefault(); ask(input.value); });
+  input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(input.value); } });
+  document.getElementById("newChat").addEventListener("click", e => { e.preventDefault(); threadId = null; log.replaceChildren(); });
+  const chips = document.getElementById("chips");
+  for (const q of examples) { const b = el("button", "chip", q.length > 48 ? q.slice(0, 45) + "..." : q); b.type = "button";
+    b.addEventListener("click", () => ask(q)); chips.appendChild(b); }
+</script>
+</body>
+</html>

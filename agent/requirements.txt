@@ -8,6 +8,9 @@ httpx>=0.27,<1
 pyodbc>=5.1,<6
 azure-identity>=1.19,<2
 sqlglot>=25,<28
+# Tracing: OpenTelemetry exporter for Phoenix + auto-instrumentation of LangChain/LangGraph
+arize-phoenix-otel>=0.9,<1
+openinference-instrumentation-langchain>=0.1.30,<1
 # Must match the versions the model was trained with (ai-mlops): joblib pickles are version-sensitive
 scikit-learn==1.7.2
 numpy==2.2.6

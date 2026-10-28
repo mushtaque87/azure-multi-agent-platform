@@ -21,3 +21,11 @@ LOCAL_MODEL_DIR = os.getenv("LOCAL_MODEL_DIR", os.path.join(os.path.dirname(__fi
 # --- Guardrail limits ---
 MAX_INPUT_CHARS = int(os.getenv("MAX_INPUT_CHARS", "2000"))  # longest user message accepted
 SQL_ROW_LIMIT = int(os.getenv("SQL_ROW_LIMIT", "100"))       # TOP n forced on LLM-written SQL
+
+# --- Context and cost management ---
+MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "6000"))  # history tokens sent per LLM call
+MAX_TURNS = int(os.getenv("MAX_TURNS", "30"))                      # user questions per conversation
+
+# --- Tracing ---
+# Phoenix OTLP endpoint, e.g. http://phoenix:6006. Unset = tracing off.
+PHOENIX_COLLECTOR_ENDPOINT = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
