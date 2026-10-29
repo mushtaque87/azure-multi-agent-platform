@@ -7,7 +7,7 @@ Status is kept here so the project can be continued in any tool or editor: every
 | 1 | Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2 | Single LangGraph agent with 5 guarded tools; 5/5 parity with the Snowflake Cortex Agent | Done |
 | 3 | Chat UI and Phoenix tracing (done locally) → Azure Container Apps (no VNet), managed identity, read-only SQL user | Done |
-| 4 | **Multi-agent over A2A**: supervisor plus specialist agents (valuation, market data) | In progress |
+| 4 | **Multi-agent over A2A**: supervisor plus specialist agents (valuation, market data); Phoenix deployed to Container Apps for cloud tracing | In progress |
 | 5 | Evaluation and security baseline: JSONL golden set (incl. supervisor routing accuracy), deterministic checks plus LLM-as-judge, Prompt Shields, red team | Planned |
 | 6 | APIM AI gateway: token limits and metrics per app, managed identity to Foundry, load test | Planned |
 | 7 | Fine-tuning by distillation: gpt-4.1-nano trained on gpt-4.1-mini traces, evaluation-gated | Planned |

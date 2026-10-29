@@ -12,6 +12,83 @@ An Azure-native, multi-agent AI system built step by step:
 
 The model and its serving infrastructure come from the companion repo **[ai-mlops](https://github.com/mushtaque87/ai-mlops)**, where the house-price model was trained in Snowflake, served on an Azure ML managed online endpoint, and load tested.
 
+## Target production architecture
+
+Solid boxes and arrows are **built and running**; dashed ones are **planned** (see the roadmap below).
+
+```mermaid
+flowchart TB
+  classDef built fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#374151
+
+  user_node(["Users / client apps"])
+
+  subgraph edge_layer["Edge and gateway"]
+    apim["API Management - AI gateway<br/>auth, rate limits, per-app token quotas,<br/>token metrics, semantic cache"]:::planned
+  end
+
+  subgraph aca_env["Azure Container Apps environment cae-house-agents"]
+    ui["Chat UI + API<br/>(served by the agent)"]:::built
+    supervisor["Supervisor agent - LangGraph<br/>routes and combines over A2A"]:::planned
+    agent["House price agent - LangGraph<br/>guards, 5 tools, context trim<br/>scale 0..N"]:::built
+    valuation["Valuation agent (A2A)"]:::planned
+    market["Market data agent (A2A)"]:::planned
+    mcp["MCP tool servers"]:::planned
+    phoenix["Arize Phoenix<br/>traces and evals"]:::planned
+  end
+
+  subgraph ai_layer["AI services"]
+    foundry["Azure AI Foundry<br/>gpt-4.1-mini (+ fine-tuned nano)"]:::built
+    mlep["Azure ML managed online endpoint<br/>house-price model, autoscale"]:::planned
+    search["Azure AI Search<br/>RAG index + semantic cache"]:::planned
+    safety["Azure AI Content Safety<br/>Prompt Shields"]:::planned
+  end
+
+  subgraph data_layer["Data and secrets"]
+    sql[("Azure SQL serverless<br/>Entra-only, read-only agent user")]:::built
+    kv["Key Vault (RBAC)"]:::built
+  end
+
+  subgraph ops_layer["Operations"]
+    logs["Log Analytics + App Insights<br/>dashboards, alerts"]:::built
+    cicd["GitHub Actions + Terraform<br/>CI/CD with evaluation gate"]:::planned
+    hub["Image registry<br/>Docker Hub today, ACR planned"]:::built
+  end
+
+  user_node -->|HTTPS| ui
+  user_node -.->|HTTPS| apim
+  apim -.-> supervisor
+  ui --> agent
+  supervisor -.->|A2A| valuation
+  supervisor -.->|A2A| market
+  valuation -.->|MCP| mcp
+  market -.->|MCP| mcp
+  agent -->|"managed identity<br/>OpenAI User role"| foundry
+  agent -->|"managed identity<br/>db_datareader"| sql
+  agent -.->|"key from Key Vault"| mlep
+  agent -.-> safety
+  agent -.-> search
+  agent -.->|OTLP traces| phoenix
+  agent --> logs
+  hub --> agent
+  cicd -.-> aca_env
+  kv -.-> mlep
+```
+
+**Production qualities this design covers:**
+
+| Quality | How |
+|---|---|
+| **Security** | No secrets in code. Managed identities for Foundry and SQL. Least-privilege DB user. Defence-in-depth guardrails ([docs](docs/concepts/guardrails.md)). Prompt Shields and APIM auth planned. |
+| **Scalability** | Stateless containers that autoscale (0..N). The model scales independently on Azure ML. Serverless SQL. APIM connection pooling (proven in ai-mlops: 37.6% → 0.14% errors). |
+| **Availability** | Container Apps revisions with health probes. Retries with backoff for transient SQL errors. Graceful tool-failure handling. Persistent checkpointer and multi-replica planned. |
+| **Performance** | Prompt caching (88% of input tokens cached, seen in traces). Context trimming. Row caps. Semantic cache planned. |
+| **Observability** | OpenTelemetry traces in Phoenix (local today, Azure planned). Log Analytics. Token and latency per response. |
+| **Quality** | Golden-set evaluation (5/5 parity with Snowflake). Evaluation gate in CI planned ([docs](docs/concepts/evaluation.md)). |
+| **Cost** | Pay-per-token LLM, scale to zero, serverless DB auto-pause, a budget alert, per-app token quotas planned. |
+
+**Not in this version:** the VNet / private endpoint network-isolation design is kept for a separate networking project.
+
 ## Progress
 
 | Phase | Status |
