@@ -19,8 +19,8 @@ The model and its serving infrastructure come from the companion repo **[ai-mlop
 | 1. Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2. Single LangGraph agent with direct tools | Done |
 | 3. Chat UI and tracing → Azure Container Apps, managed identity | Done |
-| 4. Evaluation and security baseline | Planned |
-| 5. Multi-agent over A2A | Planned |
+| 4. Multi-agent over A2A | In progress |
+| 5. Evaluation and security baseline | Planned |
 | 6. APIM AI gateway | Planned |
 | 7. Fine-tuning by distillation | Planned |
 | 8. RAG advisor, semantic cache, savings dashboard | Planned |
