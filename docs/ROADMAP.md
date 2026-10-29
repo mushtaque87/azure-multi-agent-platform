@@ -6,7 +6,7 @@ Status is kept here so the project can be continued in any tool or editor: every
 |---|---|---|
 | 1 | Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2 | Single LangGraph agent with 5 guarded tools; 5/5 parity with the Snowflake Cortex Agent | Done |
-| 3 | Chat UI and Phoenix tracing (done locally) → Azure Container Apps (no VNet), managed identity, read-only SQL user | In progress |
+| 3 | Chat UI and Phoenix tracing (done locally) → Azure Container Apps (no VNet), managed identity, read-only SQL user | Done |
 | 4 | Evaluation and security baseline: JSONL golden set, deterministic checks plus LLM-as-judge, Prompt Shields, red team | Planned |
 | 5 | **Multi-agent over A2A**: supervisor plus specialist agents (valuation, market analytics) | Planned |
 | 6 | APIM AI gateway: token limits and metrics per app, managed identity to Foundry, load test | Planned |
@@ -47,6 +47,6 @@ Check training and hosting prices first. Fine-tuned deployments can bill hourly;
 | SQL server / database | `sql-house-agents` / `housepricedb` (GP serverless, auto-pause 15 min, Entra-only) |
 | Key Vault | `kv-house-agents` (RBAC; secret `foundry-api-key`) |
 | Foundry (other RG `rg_az_ai103`, eastus) | `ai103-agenticsystem-1`, deployments `gpt-4.1-mini`, `gpt-5.4` (GlobalStandard, pay per token) |
-| Container Apps | `cae-house-agents` / `ca-house-agent` (Phase 3) |
+| Container Apps | `cae-house-agents` / `acrhouseagents` (Phase 3) |
 
 The SQL firewall rule `my-ip` must match your current home IP for local development; it changes whenever the router reconnects.

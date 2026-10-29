@@ -18,7 +18,7 @@ The model and its serving infrastructure come from the companion repo **[ai-mlop
 |---|---|
 | 1. Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2. Single LangGraph agent with direct tools | Done |
-| 3. Chat UI and tracing → Azure Container Apps, managed identity | Local done; Azure deploy in progress |
+| 3. Chat UI and tracing → Azure Container Apps, managed identity | Done |
 | 4. Evaluation and security baseline | Planned |
 | 5. Multi-agent over A2A | Planned |
 | 6. APIM AI gateway | Planned |
@@ -116,3 +116,25 @@ The token breakdown also shows **88% of input tokens served from the prompt cach
 - trims history to the newest ~6,000 tokens per LLM call, without splitting a tool call from its result;
 - 30 questions per conversation;
 - `recursion_limit` 12 with a friendly reply when it's reached.
+
+### Deployed to Azure Container Apps: keyless and passwordless
+
+```mermaid
+flowchart LR
+  user_node[Browser] -->|HTTPS| aca["Container App acrhouseagents<br/>image docker.io/mushtaque87/house-agent"]
+  aca -->|"managed identity token<br/>role: Cognitive Services OpenAI User"| foundry[Foundry gpt-4.1-mini]
+  aca -->|"managed identity token<br/>DB role: db_datareader"| sql[(Azure SQL)]
+```
+
+- **No secrets in the app:** no Foundry key, no SQL password. The app's system-assigned managed identity gets Entra tokens at run time.
+- **Least privilege:** the identity can only call the model (not read keys or change deployments), and is a `db_datareader` database user, so the database itself refuses writes.
+- **Scale to zero:** 0–1 replicas, 0.5 vCPU / 1 GiB.
+- **Evaluation on the public URL:** 5/5 with the same answers as local.
+
+Built manually in the portal first, then scripted (idempotent: rerunning against the portal-built setup changes nothing):
+
+```bash
+docker buildx build --platform linux/amd64 -t mushtaque87/house-agent:v1 --push agent/
+python infra/scripts/aca_deploy.py                                          # env, app, identity, Foundry RBAC
+./infra/scripts/run_tools.sh sql_setup.py -s sql-house-agents --reader acrhouseagents   # read-only DB user
+```
