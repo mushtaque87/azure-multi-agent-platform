@@ -119,7 +119,7 @@ Details, design notes and the Azure resource list: [docs/ROADMAP.md](docs/ROADMA
 ./infra/scripts/run_tools.sh sql_setup.py -s sql-house-agents --load   # create table, load, verify
 ```
 
-Concept notes for each phase are in [docs/concepts/](docs/concepts/). Guardrail principles: [docs/concepts/guardrails.md](docs/concepts/guardrails.md).
+Concept notes for each phase are in [docs/concepts/](docs/concepts/). Study guides: [guardrails](docs/concepts/guardrails.md), [evaluation](docs/concepts/evaluation.md), [multi-agent](docs/concepts/multi-agent-study-guide.md).
 
 ## Phase 2 results: single LangGraph agent
 
