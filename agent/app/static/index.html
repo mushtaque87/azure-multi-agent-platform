@@ -35,7 +35,7 @@
 <div class="wrap">
   <header>
     <h1>House Price Agent</h1>
-    <span class="sub">LangGraph · Azure AI Foundry gpt-4.1-mini · Azure SQL · <a href="#" id="newChat">new chat</a></span>
+    <span class="sub">Supervisor + A2A specialists · Azure AI Foundry gpt-4.1-mini · Azure SQL · <a href="#" id="newChat">new chat</a></span>
   </header>
   <div class="chips" id="chips"></div>
   <div id="log" aria-live="polite"></div>
@@ -61,7 +61,11 @@
 
   function addBot(r) {
     const box = el("div", "msg bot", r.answer);
-    const tools = (r.tool_calls || []).map(c => c.tool).join(", ") || "none";
+    // Route: for a supervisor, show specialist -> its tools (e.g. ask_market_data_agent[query_house_stats])
+    const tools = (r.tool_calls || []).map(c => {
+      const sub = (c.result && c.result.tool_calls) ? c.result.tool_calls.map(s => s.tool).join(", ") : "";
+      return sub ? `${c.tool}[${sub}]` : c.tool;
+    }).join(", ") || "none";
     box.appendChild(el("div", "meta", `tools: ${tools} · ${r.latency_ms} ms · tokens in/out ${r.tokens.input}/${r.tokens.output}`));
     for (const c of r.tool_calls || []) {
       const d = el("details"); d.appendChild(el("summary", null, `${c.tool} details`));

@@ -217,9 +217,18 @@ The supervisor gets **no SQL token**, because it doesn't need data. Least privil
 
 ---
 
-## Part 4: Verification status
+## Part 4: Verification status (local Docker Compose stack)
 
-Implemented in Phase 4. Startup and **Agent Card discovery are verified**: the supervisor's `/healthz` listed `valuation-agent` and `market-data-agent`. Still to verify with an end-to-end run:
-- the A2A `message/send` path, including LangChain injecting `config` into the delegation tool to read the thread id;
-- whether `traceparent` links the spans in Phoenix;
-- follow-up questions through the supervisor.
+Verified with `agent/tests/smoke_multiagent.py`, **8/8 checked cases passing** plus 3 behaviour cases:
+- **Discovery:** the supervisor read both Agent Cards at startup (`/healthz` lists `valuation-agent`, `market-data-agent`).
+- **Routing:** every question reached the right specialist. Prediction questions → valuation; statistics and lookups → market data.
+- **Multi-specialist:** "predict this house AND give the Suburban average" called **both** specialists in one turn.
+- **Context passing:** the follow-up "What if it had a pool?" produced the pool-adjusted valuation, so the supervisor sent a self-contained request.
+- **Behaviour:** asks for missing features, declines off-topic requests, blocks injection before any LLM call.
+- **Distributed tracing:** one question = **one trace** spanning supervisor → `ask_market_data_agent` → the market agent's own LangGraph → `lookup_house`.
+
+**Bugs found while verifying, and their fixes** (good interview material):
+1. **No `traceparent` header was being sent.** OpenInference records LangChain spans through callbacks and doesn't make them the OpenTelemetry *current* span, so `inject()` found nothing. **Fix:** use `openinference.instrumentation.langchain.get_current_span()` and inject that span's context.
+2. **Database logins failed locally.** The containers kept an expired (~1 hour) `az` SQL token across restarts. **Fix:** `run_agent.sh` uses `--force-recreate`. This doesn't apply in Azure, where managed identities refresh tokens automatically.
+
+Note: Phoenix files every span of a distributed trace under the project of the *root* span (the supervisor), so the specialists' spans appear inside the supervisor's traces.

@@ -29,3 +29,11 @@ MAX_TURNS = int(os.getenv("MAX_TURNS", "30"))                      # user questi
 # --- Tracing ---
 # Phoenix OTLP endpoint, e.g. http://phoenix:6006. Unset = tracing off.
 PHOENIX_COLLECTOR_ENDPOINT = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
+
+# --- Multi-agent (Phase 4) ---
+# Which agent this container runs: single | supervisor | valuation | market (see agents.py)
+AGENT_ROLE = os.getenv("AGENT_ROLE", "single")
+# The supervisor discovers specialists from these base URLs (comma-separated) via their Agent Cards
+SPECIALIST_URLS = [u.strip() for u in os.getenv("SPECIALIST_URLS", "").split(",") if u.strip()]
+# The URL other agents use to reach THIS agent; published in its Agent Card
+PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8000").rstrip("/")

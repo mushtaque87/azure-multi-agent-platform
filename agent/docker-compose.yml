@@ -1,18 +1,50 @@
-# Local stack: the agent + Arize Phoenix (open-source tracing UI, stores traces in its own container).
+# Local multi-agent stack: supervisor + 2 A2A specialists + Arize Phoenix. One image, three roles.
+#   supervisor  http://localhost:8000  (chat UI + /chat)    - no data access, delegates over A2A
+#   valuation   http://localhost:8001  (Agent Card + /a2a)  - model tools
+#   market      http://localhost:8002  (Agent Card + /a2a)  - SQL tools
+#   phoenix     http://localhost:6006  (traces)
+x-agent: &agent
+  build: .
+  image: house-agent
+  depends_on: [phoenix]
+
 services:
-  agent:
-    build: .
-    image: house-agent
-    container_name: house-agent
+  supervisor:
+    <<: *agent
+    container_name: house-supervisor
     ports: ["8000:8000"]
     environment:
-      # Listed without values = taken from the shell that runs compose (run_agent.sh exports them)
+      - AGENT_ROLE=supervisor
       - FOUNDRY_API_KEY
-      - SQL_ACCESS_TOKEN
+      # Compose DNS: service names resolve inside the network. The supervisor discovers both specialists
+      # by fetching http://<name>:8000/.well-known/agent-card.json at startup.
+      - SPECIALIST_URLS=http://valuation:8000,http://market:8000
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006
+    depends_on: [phoenix, valuation, market]
+
+  valuation:
+    <<: *agent
+    container_name: house-valuation
+    ports: ["8001:8000"]
+    environment:
+      - AGENT_ROLE=valuation
+      - PUBLIC_URL=http://valuation:8000   # published in its Agent Card
+      - FOUNDRY_API_KEY
+      - SQL_ACCESS_TOKEN                   # compare_to_market reads similar sales
       - ML_ENDPOINT_URL
       - ML_ENDPOINT_KEY
-      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006  # "phoenix" = the service name below (compose DNS)
-    depends_on: [phoenix]
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006
+
+  market:
+    <<: *agent
+    container_name: house-market
+    ports: ["8002:8000"]
+    environment:
+      - AGENT_ROLE=market
+      - PUBLIC_URL=http://market:8000
+      - FOUNDRY_API_KEY
+      - SQL_ACCESS_TOKEN
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006
 
   phoenix:
     image: arizephoenix/phoenix:latest

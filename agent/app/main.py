@@ -1,33 +1,48 @@
-"""HTTP API for the agent: POST /chat (JSON), GET /healthz."""
-import json   # parse tool results (tools return JSON strings)
+"""HTTP API for every agent role.
+  all roles:     GET /healthz, POST /chat (JSON), GET / (chat UI)
+  specialists:   GET /.well-known/agent-card.json, POST /a2a (A2A JSON-RPC)
+The role comes from AGENT_ROLE (single | supervisor | valuation | market)."""
 import os
-import time   # measure latency
-import uuid   # generate a conversation id when the client doesn't send one
+import uuid
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.errors import GraphRecursionError  # raised when recursion_limit is hit
 # Pydantic: declare the request shape; FastAPI validates every request against it (HTTP 422 if invalid)
 from pydantic import BaseModel, Field
 
 from . import config
-from .graph import build_graph
+from .agents import CARDS, ROLES
 
 # Tracing must be set up BEFORE the graph is built, so every LLM call, tool call and graph step
-# is recorded as an OpenTelemetry span and sent to Phoenix.
+# is recorded as an OpenTelemetry span and sent to Phoenix. One Phoenix project per agent role.
 if config.PHOENIX_COLLECTOR_ENDPOINT:
     from phoenix.otel import register
-    register(project_name="house-price-agent",
+    register(project_name=f"house-price-{config.AGENT_ROLE}",
              endpoint=f"{config.PHOENIX_COLLECTOR_ENDPOINT}/v1/traces",
              auto_instrument=True)  # turns on the OpenInference LangChain instrumentor
 
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+from .a2a import fetch_card, make_delegate_tool, make_router  # noqa: E402 (after tracing setup)
+from .graph import build_graph  # noqa: E402
+from .runner import run_turn  # noqa: E402
 
-app = FastAPI(title="House Price Agent", version="1.0")  # the web app; uvicorn serves it on port 8000
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+role = ROLES[config.AGENT_ROLE]
+
+if config.AGENT_ROLE == "supervisor":
+    # A2A discovery: read each specialist's Agent Card and turn it into a delegation tool
+    cards = [fetch_card(url) for url in config.SPECIALIST_URLS]
+    tools = [make_delegate_tool(card) for card in cards]
+else:
+    cards, tools = [], role["tools"]
+
+app = FastAPI(title=f"House Price Agent ({config.AGENT_ROLE})", version="2.0")
 # Built ONCE at server start, shared by all requests: creating the LLM client and compiling the
 # graph has a cost, and the in-memory conversation store must live as long as the server.
-graph = build_graph()
+graph = build_graph(tools, role["prompt"])
+
+if config.AGENT_ROLE in CARDS:
+    # Specialists speak A2A: publish an Agent Card and accept message/send
+    app.include_router(make_router(graph, CARDS[config.AGENT_ROLE], config.AGENT_ROLE))
 
 
 class ChatRequest(BaseModel):
@@ -39,7 +54,8 @@ class ChatRequest(BaseModel):
 @app.get("/healthz")
 def healthz():
     """Liveness probe: Container Apps calls this to know the container is up."""
-    return {"status": "ok"}
+    return {"status": "ok", "role": config.AGENT_ROLE,
+            "specialists": [c["name"] for c in cards]}
 
 
 @app.get("/")
@@ -51,46 +67,4 @@ def index():
 @app.post("/chat")
 def chat(req: ChatRequest):
     # Continue the client's conversation, or start a new one with a random id (returned to the client)
-    thread_id = req.thread_id or str(uuid.uuid4())
-    start = time.perf_counter()  # high-resolution timer start
-
-    # The config tells the checkpointer which saved conversation to load/update
-    cfg = {"configurable": {"thread_id": thread_id}}
-    # How many messages this thread had BEFORE this turn (0 for a new thread). The result contains
-    # the whole history, so we use this count to slice out only this turn's messages below.
-    before = len(graph.get_state(cfg).values.get("messages", []))
-
-    # Run the graph to END. Input = the new user message (appended to the saved history).
-    # recursion_limit = max node steps for this run, so a tool-calling loop can't run (and bill) forever.
-    try:
-        result = graph.invoke({"messages": [HumanMessage(req.message)]}, {**cfg, "recursion_limit": 12})
-    except GraphRecursionError:
-        # Friendly reply instead of HTTP 500 when the agent needs too many steps
-        return {"thread_id": thread_id, "answer": "I couldn't complete that in a reasonable number of steps. "
-                "Please ask a narrower question.", "tool_calls": [],
-                "latency_ms": round((time.perf_counter() - start) * 1000), "tokens": {"input": 0, "output": 0}}
-    new = result["messages"][before:]  # this turn only: user msg, AI tool calls, tool results, answer
-
-    # Pair each tool call with its result using the tool_call_id the LLM assigned (works even if the
-    # same tool is called twice in one turn)
-    tool_calls, by_id = [], {}
-    for m in new:
-        if isinstance(m, AIMessage):
-            for c in m.tool_calls:  # what the LLM asked to run, with which arguments
-                by_id[c["id"]] = {"tool": c["name"], "args": c["args"]}
-                tool_calls.append(by_id[c["id"]])
-        elif isinstance(m, ToolMessage) and m.tool_call_id in by_id:
-            try:
-                by_id[m.tool_call_id]["result"] = json.loads(m.content)  # tools return JSON
-            except (TypeError, ValueError):
-                by_id[m.tool_call_id]["result"] = m.content  # e.g. a plain-text tool error
-
-    # Token usage as reported by Foundry for each LLM call this turn (for cost tracking)
-    usage = [m.usage_metadata for m in new if isinstance(m, AIMessage) and m.usage_metadata]
-    return {
-        "thread_id": thread_id,                 # send this back next time to continue the conversation
-        "answer": new[-1].content,              # the last message is the final answer (or the refusal)
-        "tool_calls": tool_calls,               # transparency: which tools ran, with what, returning what
-        "latency_ms": round((time.perf_counter() - start) * 1000),
-        "tokens": {"input": sum(u["input_tokens"] for u in usage), "output": sum(u["output_tokens"] for u in usage)},
-    }
+    return run_turn(graph, req.message, req.thread_id or str(uuid.uuid4()))

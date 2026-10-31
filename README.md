@@ -96,7 +96,7 @@ flowchart TB
 | 1. Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2. Single LangGraph agent with direct tools | Done |
 | 3. Chat UI and tracing → Azure Container Apps, managed identity | Done |
-| 4. Multi-agent over A2A | In progress |
+| 4. Multi-agent over A2A | Local done (8/8); Azure deploy next |
 | 5. Evaluation and security baseline | Planned |
 | 6. APIM AI gateway | Planned |
 | 7. Fine-tuning by distillation | Planned |
@@ -215,3 +215,34 @@ docker buildx build --platform linux/amd64 -t mushtaque87/house-agent:v1 --push 
 python infra/scripts/aca_deploy.py                                          # env, app, identity, Foundry RBAC
 ./infra/scripts/run_tools.sh sql_setup.py -s sql-house-agents --reader acrhouseagents   # read-only DB user
 ```
+
+## Phase 4 results: multi-agent over A2A (local)
+
+```mermaid
+flowchart LR
+  user_node[User] --> sup["Supervisor :8000<br/>no data access"]
+  sup -->|"A2A message/send<br/>+ traceparent"| val["Valuation agent :8001<br/>predict, explain, compare"]
+  sup -->|"A2A message/send<br/>+ traceparent"| mkt["Market data agent :8002<br/>lookup, SQL stats"]
+  val --> sql[(Azure SQL)]
+  mkt --> sql
+  sup -.-> phx[Phoenix: one trace across all agents]
+  val -.-> phx
+  mkt -.-> phx
+```
+
+- **One image, four roles** (`AGENT_ROLE`: single / supervisor / valuation / market).
+- **A2A, implemented directly** (`agent/app/a2a.py`): each specialist publishes an **Agent Card** at `/.well-known/agent-card.json` and accepts JSON-RPC `message/send`. The supervisor **discovers specialists from their cards at startup** and exposes each to its LLM as a tool.
+- **Results:** 8/8 checked cases plus 3 behaviour cases pass:
+  - correct routing for every question;
+  - a question needing both specialists called both;
+  - the follow-up "What if it had a pool?" worked across agents (context passing);
+  - injection was blocked before any LLM call.
+- **Distributed tracing:** a W3C `traceparent` header on every A2A call, so one user question is one Phoenix trace across agents.
+- **Least privilege:** the supervisor has no SQL token; each agent runs its own input guard.
+
+```bash
+./agent/run_agent.sh                                                     # supervisor UI :8000, specialists :8001/:8002, Phoenix :6006
+docker cp agent/tests/smoke_multiagent.py house-supervisor:/tmp/ && docker exec house-supervisor python /tmp/smoke_multiagent.py
+```
+
+Study guide: [docs/concepts/multi-agent-study-guide.md](docs/concepts/multi-agent-study-guide.md).
