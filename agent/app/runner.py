@@ -21,13 +21,13 @@ def run_turn(graph, message: str, thread_id: str) -> dict:
     except GraphRecursionError:
         # Friendly reply instead of HTTP 500 when the agent needs too many steps
         return {"thread_id": thread_id, "answer": "I couldn't complete that in a reasonable number of steps. "
-                "Please ask a narrower question.", "tool_calls": [],
+                "Please ask a narrower question.", "tool_calls": [], "tables": [],
                 "latency_ms": round((time.perf_counter() - start) * 1000), "tokens": {"input": 0, "output": 0}}
     new = result["messages"][before:]  # this turn only: user msg, AI tool calls, tool results, answer
 
     # Pair each tool call with its result using the tool_call_id the LLM assigned (works even if the
     # same tool is called twice in one turn)
-    tool_calls, by_id = [], {}
+    tool_calls, by_id, tables = [], {}, []
     for m in new:
         if isinstance(m, AIMessage):
             for c in m.tool_calls:  # what the LLM asked to run, with which arguments
@@ -38,6 +38,13 @@ def run_turn(graph, message: str, thread_id: str) -> dict:
                 by_id[m.tool_call_id]["result"] = json.loads(m.content)  # tools return JSON
             except (TypeError, ValueError):
                 by_id[m.tool_call_id]["result"] = m.content  # e.g. a plain-text tool error
+            # Artifacts = data for the USER (tables), never sent to the LLM. A list_houses call gives one
+            # table; a supervisor's delegation gives the list of tables its specialist returned.
+            art = getattr(m, "artifact", None)
+            if isinstance(art, dict) and art.get("type") == "table":
+                tables.append(art)
+            elif isinstance(art, list):
+                tables += [t for t in art if isinstance(t, dict) and t.get("type") == "table"]
 
     # Token usage as reported by Foundry for each LLM call this turn (for cost tracking).
     # A supervisor's delegation results carry the specialist's tokens too - add them, so the total
@@ -53,6 +60,7 @@ def run_turn(graph, message: str, thread_id: str) -> dict:
         "thread_id": thread_id,                 # send this back next time to continue the conversation
         "answer": new[-1].content,              # the last message is the final answer (or the refusal)
         "tool_calls": tool_calls,               # transparency: which tools ran, with what, returning what
+        "tables": tables,                       # rows for the UI to render (not seen by any LLM)
         "latency_ms": round((time.perf_counter() - start) * 1000),
         "tokens": tokens,
     }

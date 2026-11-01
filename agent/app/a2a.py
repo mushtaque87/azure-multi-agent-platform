@@ -96,11 +96,15 @@ def make_router(graph, card: dict, role: str) -> APIRouter:
             if token is not None:
                 otel_context.detach(token)
 
-        # A2A Message reply. Our extension: tool calls and tokens in metadata, so the caller can show
-        # the full route and add up the cost of the question across agents.
+        # A2A Message reply: a text part for the answer, plus one DATA part per table (A2A's part type for
+        # structured data) so the caller can render rows without them passing through any LLM.
+        # Our extension: tool calls and tokens in metadata, so the caller can show the full route and add up
+        # the cost of the question across agents.
+        parts = [{"kind": "text", "text": turn["answer"]}]
+        parts += [{"kind": "data", "data": t} for t in turn.get("tables", [])]
         return {"jsonrpc": "2.0", "id": rpc_id, "result": {
             "kind": "message", "role": "agent", "messageId": str(uuid.uuid4()), "contextId": context_id,
-            "parts": [{"kind": "text", "text": turn["answer"]}],
+            "parts": parts,
             "metadata": {"agent": full_card["name"], "tool_calls": turn["tool_calls"],
                          "tokens": turn["tokens"], "latency_ms": turn["latency_ms"]},
         }}
@@ -135,7 +139,7 @@ def make_delegate_tool(card: dict) -> StructuredTool:
     description = f"{card['description']} Skills - {skills}"
     url = card["url"]
 
-    def call(request: str, config: RunnableConfig) -> str:
+    def call(request: str, config: RunnableConfig):
         # The supervisor's thread id becomes the A2A contextId, so the specialist keeps per-conversation memory
         thread_id = (config.get("configurable") or {}).get("thread_id", str(uuid.uuid4()))
         payload = {"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": "message/send", "params": {
@@ -152,11 +156,17 @@ def make_delegate_tool(card: dict) -> StructuredTool:
         r.raise_for_status()
         body = r.json()
         if "error" in body:
-            return json.dumps({"agent": card["name"], "error": body["error"]["message"]})
+            return json.dumps({"agent": card["name"], "error": body["error"]["message"]}), []
         res = body["result"]
         answer = " ".join(p.get("text", "") for p in res.get("parts", []) if p.get("kind") == "text")
+        tables = [p["data"] for p in res.get("parts", []) if p.get("kind") == "data"]
         meta = res.get("metadata", {})
-        return json.dumps({"agent": card["name"], "answer": answer, "tool_calls": meta.get("tool_calls", []),
-                           "tokens": meta.get("tokens", {}), "latency_ms": meta.get("latency_ms")}, default=str)
+        # (content, artifact): content -> the supervisor's LLM (answer + small tool summaries);
+        # artifact -> the tables, passed up to the UI without entering the supervisor's context
+        content = json.dumps({"agent": card["name"], "answer": answer, "tool_calls": meta.get("tool_calls", []),
+                              "tables_shown_to_user": [t.get("showing") for t in tables],
+                              "tokens": meta.get("tokens", {}), "latency_ms": meta.get("latency_ms")}, default=str)
+        return content, tables
 
-    return StructuredTool.from_function(func=call, name=name, description=description, args_schema=DelegateInput)
+    return StructuredTool.from_function(func=call, name=name, description=description, args_schema=DelegateInput,
+                                        response_format="content_and_artifact")

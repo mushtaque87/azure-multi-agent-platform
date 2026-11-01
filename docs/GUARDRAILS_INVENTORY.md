@@ -55,6 +55,7 @@ This is the weakest layer, because the LLM may not obey. It's what declined "del
 | `LookupInput` | `house_id` **1–10000** | `tools.py` → `LookupInput` |
 | `StatsInput` | `sql` is a string (the content is checked in layer 5) | `tools.py` → `StatsInput` |
 | `DelegateInput` | `request` is a string | `a2a.py` → `DelegateInput` |
+| `ListInput` (list_houses) | Only allow-listed filters: neighborhood (5), condition (4), bedrooms 1–6, bathrooms 1–4, price/sqft ≥ 0, age 0–50, year 1900–2100; `sort_by` one of 8 columns; `page` ≥ 1; **`page_size` 1–50** | `tools.py` → `ListInput` |
 
 On failure, the validation error goes back to the LLM, which corrects itself or asks the user. The ranges also prevent unreliable extrapolation outside the training data.
 
@@ -70,7 +71,9 @@ On failure, the validation error goes back to the LLM, which corrects itself or 
 | No system functions | Blocks `xp_`, `sp_`, `OPENROWSET`, `OPENQUERY` | `validate_sql()` |
 | Correct averages | Rewrites `AVG(x)` → `AVG(CAST(x AS FLOAT))` | `validate_sql()` → `float_avg` |
 | Row cap | Forces `TOP 100` (`SQL_ROW_LIMIT`) | `validate_sql()` |
-| Parameterised SQL | Values are sent separately from the SQL text, so they can't change it | `tools.py` → `lookup_house`, `compare_to_market` |
+| Parameterised SQL | Values are sent separately from the SQL text, so they can't change it | `tools.py` → `lookup_house`, `compare_to_market`, `list_houses` |
+| Structured filters instead of LLM SQL | `list_houses` builds its query from fixed column names + `?` parameters; the LLM never writes SQL for lists | `tools.py` → `_where()`, `list_houses` |
+| Stats row backstop | If `query_house_stats` returns more than 20 rows, only 20 reach the LLM, with a note to use `list_houses` | `tools.py` → `STATS_ROWS_TO_LLM` |
 | Tool failure handling | Any tool exception becomes "service unavailable" for the LLM, not an HTTP 500 | `graph.py` → `ToolNode(handle_tool_errors=...)` |
 | Model service errors | Azure ML HTTP errors return "Valuation service unavailable" | `tools.py` → `predict_price`, `compare_to_market` |
 
@@ -100,7 +103,8 @@ Locally, the specialists connect with your **admin** token, so the read-only dat
 | Azure ML call | 30 s timeout | `tools.py` → `_predict()` |
 | SQL query | **15 s** per query, 60 s to connect | `db.py` |
 | SQL transient retries | Up to 4 attempts (5, 10, 20 s backoff); only cold-start and throttling errors | `db.py` → `TRANSIENT_CODES` |
-| Rows returned | `TOP 100` | `validate_sql()` |
+| Rows returned | `TOP 100` on LLM-written SQL; at most 50 rows per page for `list_houses` | `validate_sql()`, `ListInput` |
+| **Bulk data kept out of LLM context** ("render, don't read") | `list_houses` returns a ~150-token summary to the LLM; the rows travel as a tool **artifact** → A2A **data part** → UI table | `tools.py` → `list_houses` (`content_and_artifact`); `a2a.py`; `runner.py` |
 | Agent discovery | 20 attempts × 3 s for Agent Cards at startup | `a2a.py` → `fetch_card()` |
 | Spending | ₹1,000 budget alert on the resource group | Azure budget `budget-house-agents` |
 
@@ -123,4 +127,5 @@ Locally, the specialists connect with your **admin** token, so the read-only dat
 
 ## Change log
 - Phases 2–4: layers 1–9 above.
+- Phase 4: `list_houses` (structured filters, pagination, render-don't-read) and the stats row backstop. Listing 1,682 three-bedroom houses: 3,569 input tokens, down from 15,547 when 100 rows went through the LLMs.
 - *(Add planned guards here as they're built: Prompt Shields, content safety and PII on output, APIM rate limits and token quotas, per-agent managed identities with internal-only specialists, the evaluation gate in CI.)*

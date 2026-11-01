@@ -1,0 +1,32 @@
+sequenceDiagram
+    autonumber
+    participant UI as Browser
+    participant SUP as Supervisor (main.py, runner.py, graph.py)
+    participant LLM as Foundry gpt-4.1-mini
+    participant CL as a2a.py delegate tool call()
+    participant MKT as Market agent a2a.py /a2a handler
+    participant MG as Market LangGraph (graph.py)
+    participant T as tools.py lookup_house()
+    participant DB as Azure SQL (db.py query())
+
+    UI->>SUP: POST /chat "Look up house ID 42"
+    SUP->>SUP: guard_input (guards.check_input)
+    SUP->>LLM: prompt + 2 delegation tools
+    LLM-->>SUP: tool_call ask_market_data_agent(request="Look up house ID 42")
+    SUP->>CL: ToolNode runs the delegate tool
+    CL->>MKT: POST /a2a JSON-RPC message/send (contextId=thread, traceparent)
+    MKT->>MG: run_turn(graph, text, "market:<contextId>")
+    MG->>MG: guard_input again (every agent is a trust boundary)
+    MG->>LLM: market prompt + [lookup_house, query_house_stats]
+    LLM-->>MG: tool_call lookup_house(house_id=42)
+    MG->>T: ToolNode -> lookup_house (Pydantic: id 1..10000)
+    T->>DB: SELECT * FROM dbo.house_prices WHERE id = ? (parameterised)
+    DB-->>T: row
+    T-->>MG: JSON row
+    MG->>LLM: tool result
+    LLM-->>MG: "House 42 ... sold for $566,563"
+    MKT-->>CL: A2A Message {parts:[text], metadata:{tool_calls, tokens}}
+    CL-->>SUP: JSON {agent, answer, tool_calls, tokens}
+    SUP->>LLM: specialist result
+    LLM-->>SUP: final answer
+    SUP-->>UI: answer + route ask_market_data_agent[lookup_house] + total tokens

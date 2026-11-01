@@ -22,6 +22,11 @@
     details { margin-top: 6px; font-size: .8rem; }
     details pre { overflow-x: auto; background: light-dark(#f3f4f6, #111827); padding: 8px; border-radius: 6px; margin: 4px 0; }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .tbl-wrap { overflow-x: auto; margin-top: 8px; max-height: 360px; overflow-y: auto; }
+    .tbl-wrap table { border-collapse: collapse; font-size: .78rem; white-space: nowrap; }
+    .tbl-wrap th, .tbl-wrap td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+    .tbl-wrap th { position: sticky; top: 0; background: light-dark(#f3f4f6, #111827); }
+    .pager { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: .78rem; color: var(--muted); }
     .chip { border: 1px solid var(--line); background: transparent; color: inherit; border-radius: 999px;
             padding: 4px 10px; font-size: .8rem; cursor: pointer; }
     form { display: flex; gap: 8px; }
@@ -49,6 +54,7 @@
   // never innerHTML, so a malicious answer can't inject script (XSS protection).
   const examples = [
     "What is the average price of houses in the Downtown neighborhood?",
+    "List 3 bedroom houses in Downtown with a pool, cheapest first",
     "Look up house ID 42",
     "Is $650,000 a good price for a 2000 sqft, 3 bed, 2 bath, 10 year old Suburban house in Good condition, 2 garage, no pool, 6000 sqft lot?",
     "What drives house prices the most?",
@@ -73,6 +79,33 @@
       box.appendChild(d);
     }
     log.appendChild(box); log.scrollTop = log.scrollHeight;
+    for (const t of r.tables || []) box.insertBefore(renderTable(t), box.querySelector(".meta"));
+  }
+
+  // Tables come from tool ARTIFACTS: rendered here, never read by any LLM ("render, don't read").
+  function renderTable(t) {
+    const wrap = el("div");
+    const scroll = el("div", "tbl-wrap"), table = el("table"), head = el("tr");
+    for (const c of t.columns) head.appendChild(el("th", null, c));
+    const thead = el("thead"); thead.appendChild(head); table.appendChild(thead);
+    const tbody = el("tbody");
+    for (const row of t.rows) {
+      const tr = el("tr");
+      row.forEach((v, i) => tr.appendChild(el("td", null,
+        t.columns[i] === "price" ? "$" + Number(v).toLocaleString() : String(v))));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
+    const pager = el("div", "pager");
+    pager.appendChild(el("span", null, `Showing ${t.showing} · page ${t.page}/${t.total_pages} · sorted by ${t.sorted_by}`));
+    for (const [label, p] of [["Previous", t.page - 1], ["Next", t.page + 1]]) {
+      if (p < 1 || p > t.total_pages) continue;
+      const b = el("button", "chip", label); b.type = "button";
+      b.addEventListener("click", () => ask(`Show page ${p} of that list`));
+      pager.appendChild(b);
+    }
+    wrap.appendChild(pager);
+    return wrap;
   }
 
   async function ask(text) {

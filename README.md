@@ -232,13 +232,18 @@ flowchart LR
 
 - **One image, four roles** (`AGENT_ROLE`: single / supervisor / valuation / market).
 - **A2A, implemented directly** (`agent/app/a2a.py`): each specialist publishes an **Agent Card** at `/.well-known/agent-card.json` and accepts JSON-RPC `message/send`. The supervisor **discovers specialists from their cards at startup** and exposes each to its LLM as a tool.
-- **Results:** 8/8 checked cases plus 3 behaviour cases pass:
+- **Results:** 10/10 checked cases plus 3 behaviour cases pass:
   - correct routing for every question;
   - a question needing both specialists called both;
   - the follow-up "What if it had a pool?" worked across agents (context passing);
   - injection was blocked before any LLM call.
 - **Distributed tracing:** a W3C `traceparent` header on every A2A call, so one user question is one Phoenix trace across agents.
 - **Least privilege:** the supervisor has no SQL token; each agent runs its own input guard.
+
+**Listing without burning tokens ("render, don't read").** "List all houses with 3 bedrooms" matches 1,682 rows.
+- **Before:** 100 rows went into the LLMs, costing **15,547 input tokens**, and the answer showed only 5 houses.
+- **Now:** `list_houses` uses structured, allow-listed filters with parameterised SQL. The LLM receives only a ~150-token summary (total, page, price range), and the rows travel as a LangChain **tool artifact** → A2A **data part** → a paginated table in the UI.
+- **Result:** **3,569 input tokens** (−77%), the full count ("1–20 of 1,682, page 1/85"), and working Previous/Next pages.
 
 ```bash
 ./agent/run_agent.sh                                                     # supervisor UI :8000, specialists :8001/:8002, Phoenix :6006
