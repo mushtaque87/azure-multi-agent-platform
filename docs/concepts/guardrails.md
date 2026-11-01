@@ -150,3 +150,5 @@ How to package them:
 - **"Where do guardrails live in a multi-agent platform?"** Generic ones in the gateway and a shared library; specific ones at each agent's tool boundary; identity per agent; tracing across all of them.
 - **"Deterministic vs LLM-based guardrails?"** Deterministic for hard rules (permissions, schemas, validators). ML classifiers for fuzzy categories (toxicity, jailbreak). An LLM-as-judge for offline evaluation, rarely inline because of latency and cost.
 - **"How do you know your guardrails work?"** Unit tests, attack cases in the evaluation suite, red-teaming, and production metrics on blocks and false positives.
+
+**Inventory of every guard in the code** (rule, file and function, failure behaviour): [../GUARDRAILS_INVENTORY.md](../GUARDRAILS_INVENTORY.md).
