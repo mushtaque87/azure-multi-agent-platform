@@ -88,6 +88,10 @@ On failure, the validation error goes back to the LLM, which corrects itself or 
 | Secrets in Key Vault | The local Foundry key is read at run time, never stored in files or images | `agent/run_agent.sh`; Key Vault (RBAC) |
 | Encrypted connections | TLS on, server certificate verified | `db.py` → `Encrypt=yes; TrustServerCertificate=no` |
 | Network | The SQL firewall allows only your IP plus Azure services | Azure SQL firewall rules |
+| Per-agent identities (Azure) | Each agent has its own managed identity; only the specialists are SQL readers; the supervisor has no data access | `infra/scripts/aca_multiagent_deploy.py` |
+| Internal-only specialists (Azure) | `ca-valuation` and `ca-market` have internal ingress: unreachable from the internet (404) | `aca_multiagent_deploy.py` (`--ingress internal`) |
+| Secrets as Key Vault references | `phoenix-api-key` is resolved by each app's identity (Key Vault Secrets User); no values in config | `aca_multiagent_deploy.py` |
+| Tracing behind login | Phoenix runs with `PHOENIX_ENABLE_AUTH`; its API returns 401 without a key | `ca-phoenix` configuration |
 | Non-root container | Runs as user `agent` (uid 10001) | `agent/Dockerfile` → `USER agent` |
 
 Locally, the specialists connect with your **admin** token, so the read-only database rule only applies in Azure.
@@ -127,5 +131,6 @@ Locally, the specialists connect with your **admin** token, so the read-only dat
 
 ## Change log
 - Phases 2–4: layers 1–9 above.
+- Phase 4 (Azure): per-agent identities, internal-only specialists, Key Vault references, Phoenix behind login.
 - Phase 4: `list_houses` (structured filters, pagination, render-don't-read) and the stats row backstop. Listing 1,682 three-bedroom houses: 3,569 input tokens, down from 15,547 when 100 rows went through the LLMs.
 - *(Add planned guards here as they're built: Prompt Shields, content safety and PII on output, APIM rate limits and token quotas, per-agent managed identities with internal-only specialists, the evaluation gate in CI.)*

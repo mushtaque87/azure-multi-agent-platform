@@ -96,7 +96,7 @@ flowchart TB
 | 1. Foundation: resource group, budget, Azure SQL (Entra-only, serverless), Key Vault (RBAC) | Done |
 | 2. Single LangGraph agent with direct tools | Done |
 | 3. Chat UI and tracing → Azure Container Apps, managed identity | Done |
-| 4. Multi-agent over A2A | Local done (8/8); Azure deploy next |
+| 4. Multi-agent over A2A | Done (local + Azure, 10/10) |
 | 5. Evaluation and security baseline | Planned |
 | 6. APIM AI gateway | Planned |
 | 7. Fine-tuning by distillation | Planned |
@@ -251,3 +251,25 @@ docker cp agent/tests/smoke_multiagent.py house-supervisor:/tmp/ && docker exec 
 ```
 
 Study guide: [docs/concepts/multi-agent-study-guide.md](docs/concepts/multi-agent-study-guide.md).
+
+### Phase 4 deployed to Azure Container Apps
+
+| App | Role | Ingress | Identity and permissions |
+|---|---|---|---|
+| `acrhouseagents` | Supervisor + chat UI | **Public** | Own managed identity: Foundry OpenAI User; **no data tools** |
+| `ca-valuation` | Valuation specialist | **Internal only** (404 from the internet) | Own identity: Foundry OpenAI User + SQL `db_datareader` |
+| `ca-market` | Market data specialist | **Internal only** | Own identity: Foundry OpenAI User + SQL `db_datareader` |
+| `ca-phoenix` | Tracing | Public, **login required** (API returns 401 without a key) | Reads its secrets from Key Vault |
+
+- **One image** (`mushtaque87/house-agent:v2`), three roles chosen by `AGENT_ROLE`.
+- **Inside the environment:** the supervisor discovers the specialists at `http://ca-valuation` and `http://ca-market` from their Agent Cards; traces go to `http://ca-phoenix`.
+- **Secrets:** the Phoenix API key is a **Key Vault reference** resolved by each app's identity (role: Key Vault Secrets User); no secret values appear in config or git.
+- **Results on the public URL:** 10/10 checks pass, plus 3 behaviour cases. Traces in Azure Phoenix show one trace spanning supervisor → market agent → `lookup_house`.
+
+```bash
+docker buildx build --platform linux/amd64 -t mushtaque87/house-agent:v2 --push agent/
+python infra/scripts/aca_multiagent_deploy.py      # specialists, supervisor switch, identities, RBAC, Key Vault refs, Phoenix wiring
+./infra/scripts/run_tools.sh sql_setup.py -s sql-house-agents --reader ca-valuation
+./infra/scripts/run_tools.sh sql_setup.py -s sql-house-agents --reader ca-market
+docker run --rm -v "$PWD/agent/tests:/t" house-agent python /t/smoke_multiagent.py https://<supervisor-fqdn>/chat
+```
