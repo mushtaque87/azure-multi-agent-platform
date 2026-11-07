@@ -1,8 +1,10 @@
 """Azure SQL access with Entra ID tokens - no password.
 
 Token source, in order:
-  1. SQL_ACCESS_TOKEN env var (local dev: run_agent.sh passes a short-lived token from `az`)
-  2. DefaultAzureCredential (in Azure: the Container App's managed identity)
+  1. SQL_ACCESS_TOKEN_FILE (local dev): a file that run_agent.sh keeps refreshed from `az` every 2 min and
+     mounts read-only into the container. Read on EVERY connection, so the newest token is always used.
+  2. SQL_ACCESS_TOKEN env var (one-off runs, e.g. the tools container; it expires after ~1 hour)
+  3. DefaultAzureCredential (in Azure: the Container App's managed identity, refreshed automatically)
 """
 import logging
 import os
@@ -26,7 +28,12 @@ _cached = {"token": None, "expires": 0}    # reuse a token until shortly before 
 
 def _token_bytes() -> bytes:
     """Return an Entra token for Azure SQL in the format the ODBC driver wants."""
-    raw = os.environ.get("SQL_ACCESS_TOKEN")  # local dev path
+    raw = None
+    token_file = os.environ.get("SQL_ACCESS_TOKEN_FILE")  # local dev: refreshed by the host
+    if token_file and os.path.exists(token_file):
+        with open(token_file) as f:
+            raw = f.read().strip() or None
+    raw = raw or os.environ.get("SQL_ACCESS_TOKEN")  # one-off local runs
     if not raw:
         global _credential
         if _cached["expires"] - time.time() < 300:  # refresh 5 minutes before expiry

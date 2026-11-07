@@ -30,10 +30,12 @@ services:
       - AGENT_ROLE=valuation
       - PUBLIC_URL=http://valuation:8000   # published in its Agent Card
       - FOUNDRY_API_KEY
-      - SQL_ACCESS_TOKEN                   # compare_to_market reads similar sales
+      # SQL token from a host file kept fresh by run_agent.sh (read on every connection; read-only mount)
+      - SQL_ACCESS_TOKEN_FILE=/run/tokens/sql_token   # compare_to_market reads similar sales
       - ML_ENDPOINT_URL
       - ML_ENDPOINT_KEY
       - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006
+    volumes: ["./.tokens:/run/tokens:ro"]
 
   market:
     <<: *agent
@@ -43,8 +45,9 @@ services:
       - AGENT_ROLE=market
       - PUBLIC_URL=http://market:8000
       - FOUNDRY_API_KEY
-      - SQL_ACCESS_TOKEN
+      - SQL_ACCESS_TOKEN_FILE=/run/tokens/sql_token
       - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006
+    volumes: ["./.tokens:/run/tokens:ro"]
 
   phoenix:
     image: arizephoenix/phoenix:latest

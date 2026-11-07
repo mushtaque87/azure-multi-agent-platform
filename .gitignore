@@ -11,3 +11,6 @@ infra/scripts/.tmp_*
 *.tfstate.*
 node_modules/
 frontend/dist/
+
+# Local SQL token refreshed by agent/run_agent.sh (short-lived credential, never commit)
+agent/.tokens/
