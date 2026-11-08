@@ -97,7 +97,7 @@ flowchart TB
 | 2. Single LangGraph agent with direct tools | Done |
 | 3. Chat UI and tracing → Azure Container Apps, managed identity | Done |
 | 4. Multi-agent over A2A | Done (local + Azure, 10/10) |
-| 5. Evaluation and security baseline | Planned |
+| 5. Evaluation and security baseline | 5a done (30/30 local); Prompt Shields next |
 | 6. APIM AI gateway | Planned |
 | 7. Fine-tuning by distillation | Planned |
 | 8. RAG advisor, semantic cache, savings dashboard | Planned |
@@ -251,6 +251,25 @@ docker cp agent/tests/smoke_multiagent.py house-supervisor:/tmp/ && docker exec 
 ```
 
 Study guide: [docs/concepts/multi-agent-study-guide.md](docs/concepts/multi-agent-study-guide.md).
+
+## Phase 5 results: evaluation
+
+A versioned **golden set** of 30 cases (`eval/golden_set.jsonl`) and a runner (`eval/run_eval.py`) that scores any deployment.
+
+- **Ground truth** comes from SQL run directly against Azure SQL, not from the agents.
+- **Deterministic checks:** expected numbers, required/forbidden text, **routing** (expected specialist and tool), no delegation for refusals, table totals for lists, token budgets.
+- **LLM-as-judge:** **gpt-5.4**, a stronger model than the agent's gpt-4.1-mini, grades rubric cases (asks for missing info, declines off-topic, doesn't leak its prompt, doesn't claim it deleted data) and checks **groundedness** (every number in the answer is supported by the tool results).
+
+| Run | Passed | By category | Routing | Groundedness | p50 / p95 latency | Avg input tokens |
+|---|---|---|---|---|---|---|
+| Local, 2026-11-08 | **30/30** | correctness 14/14, listing 2/2, routing 2/2, context 1/1, multi-agent 1/1, behaviour 3/3, security 7/7 | **20/20** | **21/21** | 4.2 s / 7.0 s | 2,721 |
+
+**Lesson learned:** Azure OpenAI's built-in content filter blocked the *judge's* request on a jailbreak test case (HTTP 400), because the judge prompt contained the attack text. The runner now records "judge blocked" and falls back to the deterministic checks, instead of crashing or counting it as a failure.
+
+```bash
+docker run --rm -e FOUNDRY_API_KEY -v "$PWD/eval:/eval" house-agent \
+  python /eval/run_eval.py --url http://host.docker.internal:8000/chat --label local   # or the Azure URL
+```
 
 ### Phase 4 deployed to Azure Container Apps
 
