@@ -97,12 +97,14 @@ flowchart TB
 | 2. Single LangGraph agent with direct tools | Done |
 | 3. Chat UI and tracing → Azure Container Apps, managed identity | Done |
 | 4. Multi-agent over A2A | Done (local + Azure, 10/10) |
-| 5. Evaluation and security baseline | 5a done (30/30 local); Prompt Shields next |
-| 6. APIM AI gateway | Planned |
-| 7. Fine-tuning by distillation | Planned |
-| 8. RAG advisor, semantic cache, savings dashboard | Planned |
-| 9. Tools refactored into MCP servers | Planned |
-| 10. Terraform, CI/CD, ADRs | Planned |
+| 5. Evaluation, security and hallucination control | 5a done (30/30 local); Prompt Shields next |
+| 6. Human-in-the-loop, exceptions and escalation | Planned |
+| 7. Document processing / OCR | Planned |
+| 8. APIM AI gateway | Planned |
+| 9. Fine-tuning by distillation | Planned |
+| 10. RAG advisor, semantic cache, savings dashboard | Planned |
+| 11. Tools refactored into MCP servers | Planned |
+| 12. Terraform, CI/CD, ADRs | Planned |
 
 Details, design notes and the Azure resource list: [docs/ROADMAP.md](docs/ROADMAP.md).
 
